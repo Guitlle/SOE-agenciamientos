@@ -1,0 +1,78 @@
+---
+- name: Deploy n8n Service
+  hosts: "{{ target_hosts | default('production') }}"
+  become: yes
+  vars:
+    n8n_service_dir: "{{ playbook_dir }}/../../n8n-service"
+    n8n_domain: "{{ lookup('env', 'N8N_DOMAIN') | default('n8n.example.com', true) }}"
+    n8n_ssl_email: "{{ lookup('env', 'N8N_SSL_EMAIL') | default('admin@example.com', true) }}"
+    postgres_password: "{{ lookup('env', 'N8N_POSTGRES_PASSWORD') | default(lookup('password', '/dev/null length=20 chars=ascii_letters,digits'), true) }}"
+  
+  tasks:
+    - name: Ensure Docker is installed
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Create n8n service directory on remote
+      file:
+        path: /opt/n8n-service
+        state: directory
+        mode: '0755'
+
+    - name: Copy n8n Docker Compose file
+      copy:
+        src: "{{ n8n_service_dir }}/docker-compose.yml"
+        dest: /opt/n8n-service/docker-compose.yml
+
+    - name: Create .env file for n8n
+      copy:
+        content: |
+          N8N_DOMAIN={{ n8n_domain }}
+          N8N_SSL_EMAIL={{ n8n_ssl_email }}
+          POSTGRES_PASSWORD={{ postgres_password }}
+        dest: /opt/n8n-service/.env
+        mode: '0600'
+
+    - name: Create n8n data directory
+      file:
+        path: /opt/n8n-service/n8n_data
+        state: directory
+        mode: '0755'
+
+    - name: Create postgres data directory
+      file:
+        path: /opt/n8n-service/postgres_data
+        state: directory
+        mode: '0755'
+
+    - name: Deploy n8n containers
+      community.docker.docker_compose_v2:
+        project_src: /opt/n8n-service
+        state: present
+        pull: always
+      register: n8n_result
+
+    - name: Show deployment result
+      debug:
+        var: n8n_result
+
+    - name: Wait for n8n to be ready
+      uri:
+        url: "http://localhost:5678/healthz"
+        status_code: 200
+      register: n8n_health
+      until: n8n_health.status == 200
+      retries: 30
+      delay: 10
+      ignore_errors: yes

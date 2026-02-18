@@ -1,0 +1,3 @@
+.env.do-server
+devops/env
+odoo-service/.env

@@ -1,0 +1,50 @@
+---
+- name: Deploy Odoo Service
+  hosts: "{{ target_hosts | default('production') }}"
+  become: yes
+  vars:
+    odoo_service_dir: "{{ playbook_dir }}/../../odoo-service"
+  
+  tasks:
+    - name: Ensure Docker is installed
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Create Odoo service directory on remote
+      file:
+        path: /opt/odoo-service
+        state: directory
+        mode: '0755'
+
+    - name: Copy Odoo Docker Compose file
+      copy:
+        src: "{{ odoo_service_dir }}/docker-compose.yml"
+        dest: /opt/odoo-service/docker-compose.yml
+
+    - name: Copy Odoo configuration
+      copy:
+        src: "{{ odoo_service_dir }}/etcodoo/"
+        dest: /opt/odoo-service/etcodoo/
+      when: copy_odoo_config | default(false) | bool
+
+    - name: Deploy Odoo containers
+      community.docker.docker_compose_v2:
+        project_src: /opt/odoo-service
+        state: present
+        pull: always
+      register: odoo_result
+
+    - name: Show deployment result
+      debug:
+        var: odoo_result

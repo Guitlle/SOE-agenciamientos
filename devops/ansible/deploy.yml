@@ -1,0 +1,39 @@
+---
+- name: Deploy All Services
+  hosts: "{{ target_hosts | default('production') }}"
+  become: yes
+  
+  pre_tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      when: ansible_os_family == "Debian"
+      changed_when: false
+
+    - name: Install required packages
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - python3-docker
+          - docker.io
+          - docker-compose-plugin
+          - git
+          - curl
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+- import_playbook: playbooks/deploy_odoo.yml
+- import_playbook: playbooks/deploy_n8n.yml
+- import_playbook: playbooks/deploy_kobotoolbox.yml

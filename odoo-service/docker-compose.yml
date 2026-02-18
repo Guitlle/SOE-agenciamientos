@@ -1,0 +1,24 @@
+version: '2'
+services:
+  db:
+    image: postgres:15
+    env_file:
+      - .env
+    volumes:
+        - ./postgresql:/var/lib/postgresql/data
+  odoo19:
+    image: odoo:19
+    depends_on:
+      - db
+    ports:
+      - "10015:8069"
+    env_file:
+      - .env
+    environment:
+      - HOST=db
+      - USER=${POSTGRES_USER}
+      - PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./odoo-web-data:/var/lib/odoo
+      - ./etcodoo:/etc/odoo
+      - ./addons:/mnt/extra-addons

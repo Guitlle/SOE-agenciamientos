@@ -1,0 +1,138 @@
+# KoboToolbox Docker Compose Setup
+# Based on https://github.com/kobotoolbox/kobo-docker
+
+version: '3.8'
+
+x-kobo-base: &kobo-base
+  environment:
+    - KOBO_DOMAIN=${KOBO_DOMAIN:-localhost}
+    - KOBO_SUBDOMAIN=${KOBO_SUBDOMAIN:-kf}
+    - KOBOCAT_SUBDOMAIN=${KOBOCAT_SUBDOMAIN:-kc}
+    - ENKETO_SUBDOMAIN=${ENKETO_SUBDOMAIN:-ee}
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-kobo}
+    - MONGO_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:-kobo}
+    - REDIS_PASSWORD=${REDIS_PASSWORD:-kobo}
+    - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change_me_in_production}
+    - EMAIL_BACKEND=${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+  networks:
+    - kobo-network
+
+services:
+  # Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./log/nginx:/var/log/nginx
+      - ./.vols/static:/srv/static
+      - ./.vols/media:/srv/media
+    depends_on:
+      - kpi
+      - kobocat
+      - enketo
+    networks:
+      - kobo-network
+
+  # KPI (KoboToolbox frontend/API)
+  kpi:
+    image: kobotoolbox/kpi:latest
+    restart: always
+    <<: *kobo-base
+    volumes:
+      - ./.vols/kpi:/srv/src/kpi
+      - ./log/kpi:/srv/logs
+      - ./.vols/static:/srv/static
+      - ./.vols/media:/srv/media
+    depends_on:
+      - postgres
+      - mongo
+      - redis_main
+      - redis_cache
+
+  # KoBoCAT (ODK Collect backend)
+  kobocat:
+    image: kobotoolbox/kobocat:latest
+    restart: always
+    <<: *kobo-base
+    volumes:
+      - ./.vols/kobocat:/srv/src/kobocat
+      - ./log/kobocat:/srv/logs
+      - ./.vols/media:/srv/media
+    depends_on:
+      - postgres
+      - mongo
+      - redis_main
+      - redis_cache
+
+  # Enketo (Form renderer)
+  enketo:
+    image: kobotoolbox/enketo-express-extra-widgets:latest
+    restart: always
+    environment:
+      - ENKETO_API_TOKEN=${ENKETO_API_TOKEN:-change_me}
+      - REDIS_MAIN_URL=redis://:${REDIS_PASSWORD}@redis_main:6379/0
+      - REDIS_CACHE_URL=redis://:${REDIS_PASSWORD}@redis_cache:6379/0
+      - REDIS_LOCK_URL=redis://:${REDIS_PASSWORD}@redis_main:6379/2
+    volumes:
+      - ./.vols/enketo:/srv/src/enketo
+      - ./log/enketo:/srv/logs
+    depends_on:
+      - redis_main
+      - redis_cache
+    networks:
+      - kobo-network
+
+  # PostgreSQL database
+  postgres:
+    image: postgis/postgis:15-3.3
+    restart: always
+    environment:
+      - POSTGRES_USER=kobo
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-kobo}
+      - POSTGRES_DB=kobotoolbox
+    volumes:
+      - ./.vols/postgres:/var/lib/postgresql/data
+      - ./log/postgres:/var/log/postgresql
+    networks:
+      - kobo-network
+
+  # MongoDB for form data
+  mongo:
+    image: mongo:6.0
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=root
+      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_ROOT_PASSWORD:-kobo}
+    volumes:
+      - ./.vols/mongo:/data/db
+      - ./log/mongo:/var/log/mongodb
+    networks:
+      - kobo-network
+
+  # Redis main
+  redis_main:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:-kobo} --appendonly yes
+    volumes:
+      - ./.vols/redis/main:/data
+    networks:
+      - kobo-network
+
+  # Redis cache
+  redis_cache:
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --requirepass ${REDIS_PASSWORD:-kobo}
+    volumes:
+      - ./.vols/redis/cache:/data
+    networks:
+      - kobo-network
+
+networks:
+  kobo-network:
+    driver: bridge

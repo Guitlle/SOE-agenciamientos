@@ -1,0 +1,85 @@
+name: Deploy All Services
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - odoo
+          - n8n
+          - kobotoolbox
+
+jobs:
+  deploy:
+    name: Deploy Services
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.SERVER_IP }} >> ~/.ssh/known_hosts
+
+      - name: Install Ansible
+        run: |
+          sudo apt update
+          sudo apt install -y ansible python3-pip
+          pip3 install docker
+
+      - name: Install Ansible Collections
+        run: |
+          ansible-galaxy collection install community.docker
+
+      - name: Deploy All Services
+        if: github.event.inputs.service == 'all' || github.event.inputs.service == null
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: False
+          ANSIBLE_CONFIG: ansible/ansible.cfg
+        run: |
+          cd ansible
+          ansible-playbook deploy.yml -i inventory/hosts.ini --private-key ~/.ssh/id_rsa -u ${{ secrets.ANSIBLE_USER }} -e "target_hosts=production"
+
+      - name: Deploy Odoo
+        if: github.event.inputs.service == 'odoo'
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: False
+          ANSIBLE_CONFIG: ansible/ansible.cfg
+        run: |
+          cd ansible
+          ansible-playbook playbooks/deploy_odoo.yml -i inventory/hosts.ini --private-key ~/.ssh/id_rsa -u ${{ secrets.ANSIBLE_USER }} -e "target_hosts=production"
+
+      - name: Deploy n8n
+        if: github.event.inputs.service == 'n8n'
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: False
+          N8N_DOMAIN: ${{ secrets.N8N_DOMAIN }}
+          N8N_SSL_EMAIL: ${{ secrets.N8N_SSL_EMAIL }}
+          N8N_POSTGRES_PASSWORD: ${{ secrets.N8N_POSTGRES_PASSWORD }}
+        run: |
+          cd ansible
+          ansible-playbook playbooks/deploy_n8n.yml -i inventory/hosts.ini --private-key ~/.ssh/id_rsa -u ${{ secrets.ANSIBLE_USER }} -e "target_hosts=production"
+
+      - name: Deploy KoboToolbox
+        if: github.event.inputs.service == 'kobotoolbox'
+        env:
+          ANSIBLE_HOST_KEY_CHECKING: False
+          KOBO_DOMAIN: ${{ secrets.KOBO_DOMAIN }}
+          KOBO_SUBDOMAIN: ${{ secrets.KOBO_SUBDOMAIN }}
+          KOBOCAT_SUBDOMAIN: ${{ secrets.KOBOCAT_SUBDOMAIN }}
+          ENKETO_SUBDOMAIN: ${{ secrets.ENKETO_SUBDOMAIN }}
+        run: |
+          cd ansible
+          ansible-playbook playbooks/deploy_kobotoolbox.yml -i inventory/hosts.ini --private-key ~/.ssh/id_rsa -u ${{ secrets.ANSIBLE_USER }} -e "target_hosts=production"

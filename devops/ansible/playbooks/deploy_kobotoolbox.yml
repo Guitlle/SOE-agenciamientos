@@ -1,0 +1,112 @@
+---
+- name: Deploy KoboToolbox Service
+  hosts: "{{ target_hosts | default('production') }}"
+  become: yes
+  vars:
+    kobo_service_dir: "{{ playbook_dir }}/../../kobotoolbox-service"
+    kobo_domain: "{{ lookup('env', 'KOBO_DOMAIN') | default('kobo.example.com', true) }}"
+    kobo_subdomain: "{{ lookup('env', 'KOBO_SUBDOMAIN') | default('kf', true) }}"
+    kobocat_subdomain: "{{ lookup('env', 'KOBOCAT_SUBDOMAIN') | default('kc', true) }}"
+    enketo_subdomain: "{{ lookup('env', 'ENKETO_SUBDOMAIN') | default('ee', true) }}"
+  
+  tasks:
+    - name: Ensure Docker is installed
+      apt:
+        name:
+          - docker.io
+          - docker-compose-plugin
+          - git
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Ensure Docker service is running
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Clone KoboToolbox Docker repository
+      git:
+        repo: https://github.com/kobotoolbox/kobo-docker.git
+        dest: /opt/kobotoolbox
+        version: master
+      when: not kobo_local_files | default(false) | bool
+
+    - name: Create KoboToolbox directory
+      file:
+        path: /opt/kobotoolbox
+        state: directory
+        mode: '0755'
+      when: kobo_local_files | default(false) | bool
+
+    - name: Copy local KoboToolbox files
+      copy:
+        src: "{{ kobo_service_dir }}/"
+        dest: /opt/kobotoolbox/
+      when: kobo_local_files | default(false) | bool
+
+    - name: Create required directories
+      file:
+        path: "/opt/kobotoolbox/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - .vols
+        - log
+        - secrets
+
+    - name: Create environment configuration file
+      template:
+        src: kobo_env.j2
+        dest: /opt/kobotoolbox/.env
+        mode: '0600'
+      vars:
+        kobo_env_content: |
+          # KoboToolbox environment configuration
+          KOBO_DOMAIN={{ kobo_domain }}
+          KOBO_SUBDOMAIN={{ kobo_subdomain }}
+          KOBOCAT_SUBDOMAIN={{ kobocat_subdomain }}
+          ENKETO_SUBDOMAIN={{ enketo_subdomain }}
+          
+          # Database passwords (generate secure ones)
+          POSTGRES_PASSWORD={{ lookup('password', '/dev/null length=20 chars=ascii_letters,digits') }}
+          MONGO_ROOT_PASSWORD={{ lookup('password', '/dev/null length=20 chars=ascii_letters,digits') }}
+          REDIS_PASSWORD={{ lookup('password', '/dev/null length=20 chars=ascii_letters,digits') }}
+          
+          # Django settings
+          DJANGO_SECRET_KEY={{ lookup('password', '/dev/null length=50 chars=ascii_letters,digits') }}
+          
+          # Email settings (configure as needed)
+          EMAIL_BACKEND=django.core.mail.backends.console.EmailBackend
+
+    - name: Deploy KoboToolbox frontend
+      community.docker.docker_compose_v2:
+        project_src: /opt/kobotoolbox
+        files:
+          - docker-compose.frontend.yml
+        state: present
+        pull: always
+      register: kobo_frontend_result
+
+    - name: Deploy KoboToolbox backend
+      community.docker.docker_compose_v2:
+        project_src: /opt/kobotoolbox
+        files:
+          - docker-compose.backend.primary.yml
+        state: present
+        pull: always
+      register: kobo_backend_result
+
+    - name: Run database migrations
+      command: >
+        docker-compose -f docker-compose.frontend.yml
+        -f docker-compose.backend.primary.yml
+        exec kpi bash -c "cd /srv/src/kpi && python manage.py migrate"
+      args:
+        chdir: /opt/kobotoolbox
+      ignore_errors: yes
+
+    - name: Show deployment result
+      debug:
+        msg: "KoboToolbox deployed successfully"
