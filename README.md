@@ -39,7 +39,7 @@ This repository contains Ansible playbooks and GitHub Actions workflows for depl
 ### Odoo 19
 - **Docker Image**: `odoo:19`
 - **Database**: PostgreSQL 15
-- **Ports**: 8069 (internal)
+- **Ports**: 8069 (internal) 10015
 - **Features**: ERP/CRM system with full business management capabilities
 
 ### n8n
